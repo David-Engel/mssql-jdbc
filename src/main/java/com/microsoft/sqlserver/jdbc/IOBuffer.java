@@ -58,6 +58,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -603,7 +604,7 @@ final class TDSChannel implements Serializable {
     ProxySocket proxySocket = null;
 
     // I/O streams for raw TCP/IP communications with SQL Server
-    private InputStream tcpInputStream;
+    private PeekableInputStream tcpInputStream;
     private OutputStream tcpOutputStream;
 
     // I/O streams providing the communications interface to the driver.
@@ -2047,6 +2048,43 @@ final class TDSChannel implements Serializable {
         }
 
         return is;
+    }
+
+    final void poll() throws SQLServerException {
+    	int origSoTimeout = 50;
+        try {
+        	origSoTimeout = proxySocket.getSoTimeout();
+        } catch (SocketException e) {
+        	if (logger.isLoggable(Level.FINE))
+                logger.fine(toString() + " proxySocket.getSoTimeout() failed. Unable to poll connection:" + e.getMessage());
+        	return;
+        }
+
+        try {
+        	proxySocket.setSoTimeout(50);
+            inputStream.read();
+        } catch (SocketTimeoutException e) {
+        	// Not a disconnected socket, so we're good to go
+            try {
+            	proxySocket.setSoTimeout(origSoTimeout);
+            } catch (SocketException se) {
+            	if (logger.isLoggable(Level.FINE))
+                    logger.fine(toString() + " getSoTimeout failed:" + se.getMessage());
+            }
+        	return;
+        } catch (IOException e) {
+            if (logger.isLoggable(Level.FINE))
+                logger.fine(toString() + " read failed:" + e.getMessage());
+
+            try {
+            	proxySocket.setSoTimeout(origSoTimeout);
+            } catch (SocketException se) {
+            	if (logger.isLoggable(Level.FINE))
+                    logger.fine(toString() + " getSoTimeout failed:" + se.getMessage());
+            }
+
+            attemptIdleConnectionReconnect();
+        }
     }
 
     final int read(byte[] data, int offset, int length) throws SQLServerException {
