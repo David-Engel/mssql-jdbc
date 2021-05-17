@@ -5,55 +5,43 @@
 
 package com.microsoft.sqlserver.jdbc;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.concurrent.TimeUnit.SECONDS;
-
-import java.text.MessageFormat;
-import java.util.Base64;
-import java.util.List;
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 
+final class SimpleTtlCache<K,V> {
 
-class CacheClear implements Runnable {
+    static final private java.util.logging.Logger logger = java.util.logging.Logger
+            .getLogger("com.microsoft.sqlserver.jdbc.SimpleTtlCache.CacheClear");
 
-    private String keylookupValue;
-    static private java.util.logging.Logger aeLogger = java.util.logging.Logger
-            .getLogger("com.microsoft.sqlserver.jdbc.CacheClear");
-
-    CacheClear(String keylookupValue) {
-        this.keylookupValue = keylookupValue;
-    }
-
-    @Override
-    public void run() {
-        // remove() is a no-op if the key is not in the map.
-        // It is a concurrentHashMap, update/remove operations are thread safe.
-        synchronized (SQLServerSymmetricKeyCache.lock) {
-            SQLServerSymmetricKeyCache instance = SQLServerSymmetricKeyCache.getInstance();
-            if (instance.getCache().containsKey(keylookupValue)) {
-                instance.getCache().get(keylookupValue).zeroOutKey();
+    class CacheClear implements Runnable {
+    
+        private K keylookupValue;
+    
+        CacheClear(SimpleTtlCache<K,V> cache, K keylookupValue) {
+            this.keylookupValue = keylookupValue;
+        }
+    
+        @Override
+        public void run() {
+            // remove() is a no-op if the key is not in the map.
+            // It is a concurrentHashMap, update/remove operations are thread safe.
+            if (cache.containsKey(keylookupValue)) {
+                cache.get(keylookupValue).zeroOutKey();
                 instance.getCache().remove(keylookupValue);
-                if (aeLogger.isLoggable(java.util.logging.Level.FINE)) {
-                    aeLogger.fine("Removed encryption key from cache...");
+                if (logger.isLoggable(java.util.logging.Level.FINE)) {
+                    logger.fine("Removed key from cache...");
                 }
             }
         }
     }
-}
 
+    final Object lock = new Object();
+    private final ConcurrentHashMap<Object, Object> cache;
+    private Duration cacheTtl = Duration.ofHours(2);
 
-/**
- * 
- * Cache for the Symmetric keys
- *
- */
-final class SQLServerSymmetricKeyCache {
-    static final Object lock = new Object();
-    private final ConcurrentHashMap<String, SQLServerSymmetricKey> cache;
-    private static final SQLServerSymmetricKeyCache instance = new SQLServerSymmetricKeyCache();
     private static ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, new ThreadFactory() {
         @Override
         public Thread newThread(Runnable r) {
@@ -63,19 +51,16 @@ final class SQLServerSymmetricKeyCache {
         }
     });
 
-    static final private java.util.logging.Logger aeLogger = java.util.logging.Logger
-            .getLogger("com.microsoft.sqlserver.jdbc.SQLServerSymmetricKeyCache");
+    void setCacheTtl(Duration duration) {
+        cacheTtl = duration;
+    }
 
-    private SQLServerSymmetricKeyCache() {
+    Duration getCacheTtl() {
+        return cacheTtl;
+    }
+
+    SimpleTtlCache() {
         cache = new ConcurrentHashMap<>();
-    }
-
-    static SQLServerSymmetricKeyCache getInstance() {
-        return instance;
-    }
-
-    ConcurrentHashMap<String, SQLServerSymmetricKey> getCache() {
-        return cache;
     }
 
     /**
@@ -86,8 +71,9 @@ final class SQLServerSymmetricKeyCache {
      * @param connection
      * @return plain text key
      */
-    SQLServerSymmetricKey getKey(EncryptionKeyInfo keyInfo, SQLServerConnection connection, SQLServerStatement statement) throws SQLServerException {
-        SQLServerSymmetricKey encryptionKey = null;
+    Object get(Object key) {
+        cache.get(key);
+    }
         synchronized (lock) {
             String serverName = connection.getTrustedServerNameAE();
             assert null != serverName : "serverName should not be null in getKey.";

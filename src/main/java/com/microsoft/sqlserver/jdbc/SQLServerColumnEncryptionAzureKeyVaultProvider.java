@@ -6,6 +6,8 @@
 package com.microsoft.sqlserver.jdbc;
 
 import static java.nio.charset.StandardCharsets.UTF_16LE;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.azure.core.http.HttpPipeline;
 import java.io.FileInputStream;
@@ -17,12 +19,17 @@ import java.nio.ByteOrder;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.text.MessageFormat;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.logging.Level;
 
 import com.azure.core.credential.TokenCredential;
@@ -60,6 +67,56 @@ public class SQLServerColumnEncryptionAzureKeyVaultProvider extends SQLServerCol
     private static final String KEY_URL_DELIMITER = "/";
     private static final String NULL_VALUE = "R_NullValue";
 
+    final Object keyCacheLock = new Object();
+    final Object verificationCacheLock = new Object();
+    private final ConcurrentHashMap<String, SQLServerSymmetricKey> keyCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, SQLServerSymmetricKey> verificationCache = new ConcurrentHashMap<>();
+    private ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, new ThreadFactory() {
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = Executors.defaultThreadFactory().newThread(r);
+            t.setDaemon(true);
+            return t;
+        }
+    });
+
+    SQLServerSymmetricKey getKey(EncryptionKeyInfo keyInfo, SQLServerStatement statement) throws SQLServerException {
+        SQLServerSymmetricKey encryptionKey = null;
+        synchronized (lock) {
+
+            String keyLookupValue = Base64.getEncoder().encodeToString((new String(keyInfo.encryptedKey, UTF_8)).getBytes());
+
+            if (aeLogger.isLoggable(java.util.logging.Level.FINE)) {
+                aeLogger.fine("Checking Symmetric key cache...");
+            }
+
+            // if ColumnEncryptionKeyCacheTtl is 0 no caching at all
+            if (!cache.containsKey(keyLookupValue)) {
+                byte[] plaintextKey;
+                plaintextKey = statement.getColumnEncryptionKeyStoreProvider(keyInfo.keyStoreName)
+                        .decryptColumnEncryptionKey(keyInfo.keyPath, keyInfo.algorithmName, keyInfo.encryptedKey);
+                encryptionKey = new SQLServerSymmetricKey(plaintextKey);
+
+                /*
+                 * a ColumnEncryptionKeyCacheTtl value of '0' means no caching at all. The expected use case is to have
+                 * the application set it once. The application could set it multiple times, in which case a key gets
+                 * the TTL defined at the time of its entry into the cache.
+                 */
+                long columnEncryptionKeyCacheTtl = SQLServerConnection.getColumnEncryptionKeyCacheTtl();
+                if (0 != columnEncryptionKeyCacheTtl) {
+                    cache.putIfAbsent(keyLookupValue, encryptionKey);
+                    if (aeLogger.isLoggable(java.util.logging.Level.FINE)) {
+                        aeLogger.fine("Adding encryption key to cache...");
+                    }
+                    scheduler.schedule(new CacheClear(keyLookupValue), columnEncryptionKeyCacheTtl, SECONDS);
+                }
+            } else {
+                encryptionKey = cache.get(keyLookupValue);
+            }
+        }
+        return encryptionKey;
+    }
+
     private HttpPipeline keyVaultPipeline;
     private KeyVaultTokenCredential keyVaultTokenCredential;
 
@@ -83,12 +140,22 @@ public class SQLServerColumnEncryptionAzureKeyVaultProvider extends SQLServerCol
     private Map<String, CryptographyClient> cachedCryptographyClients = new ConcurrentHashMap<>();
     private TokenCredential credential;
 
+    private Duration cacheTtl = Duration.ofHours(2);
+
     public void setName(String name) {
         this.name = name;
     }
 
     public String getName() {
         return this.name;
+    }
+
+    public Duration getColumnEncryptionKeyCacheTtl() {
+        return cacheTtl;
+    }
+
+    public void setColumnEncryptionKeyCacheTtl(Duration duration) {
+        cacheTtl = duration;
     }
 
     /**
@@ -839,5 +906,33 @@ public class SQLServerColumnEncryptionAzureKeyVaultProvider extends SQLServerCol
             }
         }
         return (null != props && !props.isEmpty()) ? props : null;
+    }
+}
+
+class SQLServerColumnEncryptionAzureKeyVaultProviderCacheClear implements Runnable {
+
+    private SQLServerColumnEncryptionAzureKeyVaultProviderKeyCache cache;
+    private String keylookupValue;
+    static private java.util.logging.Logger aeLogger = java.util.logging.Logger
+            .getLogger("com.microsoft.sqlserver.jdbc.SQLServerColumnEncryptionAzureKeyVaultProviderCacheClear");
+
+    SQLServerColumnEncryptionAzureKeyVaultProviderCacheClear(SQLServerColumnEncryptionAzureKeyVaultProviderKeyCache cache, String keylookupValue) {
+        this.keylookupValue = keylookupValue;
+        this.cache = cache;
+    }
+
+    @Override
+    public void run() {
+        // remove() is a no-op if the key is not in the map.
+        // It is a concurrentHashMap, update/remove operations are thread safe.
+        synchronized (cache.lock) {
+            if (cache.getCache().containsKey(keylookupValue)) {
+                cache.getCache().get(keylookupValue).zeroOutKey();
+                cache.getCache().remove(keylookupValue);
+                if (aeLogger.isLoggable(java.util.logging.Level.FINE)) {
+                    aeLogger.fine("Removed encryption key from cache.");
+                }
+            }
+        }
     }
 }

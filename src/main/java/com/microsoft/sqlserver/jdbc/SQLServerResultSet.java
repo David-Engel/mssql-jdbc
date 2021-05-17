@@ -4777,7 +4777,7 @@ public class SQLServerResultSet implements ISQLServerResultSet, java.io.Serializ
             tdsWriter.writeRPCStringUnicode(tableName);
 
             for (Column column : columns)
-                column.sendByRPC(tdsWriter, stmt.connection);
+                column.sendByRPC(tdsWriter, stmt);
         } else {
             tdsWriter.writeRPCStringUnicode("");
             tdsWriter.writeRPCStringUnicode("INSERT INTO " + tableName + " DEFAULT VALUES");

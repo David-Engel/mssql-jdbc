@@ -100,13 +100,13 @@ class SQLServerSecurityUtility {
      * Encrypts the ciphertext.
      */
     static byte[] encryptWithKey(byte[] plainText, CryptoMetadata md,
-            SQLServerConnection connection) throws SQLServerException {
+            SQLServerConnection connection, SQLServerStatement statement) throws SQLServerException {
         String serverName = connection.getTrustedServerNameAE();
         assert serverName != null : "Server name should npt be null in EncryptWithKey";
 
         // Initialize cipherAlgo if not already done.
         if (!md.IsAlgorithmInitialized()) {
-            SQLServerSecurityUtility.decryptSymmetricKey(md, connection);
+            SQLServerSecurityUtility.decryptSymmetricKey(md, connection, statement);
         }
 
         assert md.IsAlgorithmInitialized();
@@ -145,7 +145,7 @@ class SQLServerSecurityUtility {
      * @param connection
      *        The connection
      */
-    static void decryptSymmetricKey(CryptoMetadata md, SQLServerConnection connection) throws SQLServerException {
+    static void decryptSymmetricKey(CryptoMetadata md, SQLServerConnection connection, SQLServerStatement statement) throws SQLServerException {
         assert null != md : "md should not be null in DecryptSymmetricKey.";
         assert null != md.cekTableEntry : "md.EncryptionInfo should not be null in DecryptSymmetricKey.";
         assert null != md.cekTableEntry.columnEncryptionKeyValues : "md.EncryptionInfo.ColumnEncryptionKeyValues should not be null in DecryptSymmetricKey.";
@@ -158,7 +158,7 @@ class SQLServerSecurityUtility {
         while (it.hasNext()) {
             EncryptionKeyInfo keyInfo = it.next();
             try {
-                symKey = cache.getKey(keyInfo, connection);
+                symKey = cache.getKey(keyInfo, connection, statement);
                 if (null != symKey) {
                     encryptionkeyInfoChosen = keyInfo;
                     break;
@@ -197,13 +197,13 @@ class SQLServerSecurityUtility {
      * Decrypts the ciphertext.
      */
     static byte[] decryptWithKey(byte[] cipherText, CryptoMetadata md,
-            SQLServerConnection connection) throws SQLServerException {
+            SQLServerConnection connection, SQLServerStatement statement) throws SQLServerException {
         String serverName = connection.getTrustedServerNameAE();
         assert null != serverName : "serverName should not be null in DecryptWithKey.";
 
         // Initialize cipherAlgo if not already done.
         if (!md.IsAlgorithmInitialized()) {
-            SQLServerSecurityUtility.decryptSymmetricKey(md, connection);
+            SQLServerSecurityUtility.decryptSymmetricKey(md, connection, statement);
         }
 
         assert md.IsAlgorithmInitialized() : "Decryption Algorithm is not initialized";
@@ -218,7 +218,7 @@ class SQLServerSecurityUtility {
     /*
      * Verify the signature for the CMK
      */
-    static void verifyColumnMasterKeyMetadata(SQLServerConnection connection, String keyStoreName, String keyPath,
+    static void verifyColumnMasterKeyMetadata(SQLServerStatement statement, String keyStoreName, String keyPath,
             String serverName, boolean isEnclaveEnabled, byte[] CMKSignature) throws SQLServerException {
 
         // check trusted key paths
@@ -233,7 +233,7 @@ class SQLServerSecurityUtility {
             }
         }
 
-        if (!connection.getColumnEncryptionKeyStoreProvider(keyStoreName).verifyColumnMasterKeyMetadata(keyPath,
+        if (!statement.getColumnEncryptionKeyStoreProvider(keyStoreName).verifyColumnMasterKeyMetadata(keyPath,
                 isEnclaveEnabled, CMKSignature)) {
             throw new SQLServerException(SQLServerException.getErrString("R_VerifySignature"), null);
         }

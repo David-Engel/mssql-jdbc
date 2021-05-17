@@ -1910,9 +1910,9 @@ final class DTV {
      * Serializes a value as the specified type for RPC.
      */
     void sendByRPC(String name, TypeInfo typeInfo, SQLCollation collation, int precision, int outScale,
-            boolean isOutParam, TDSWriter tdsWriter, SQLServerConnection conn) throws SQLServerException {
+            boolean isOutParam, TDSWriter tdsWriter, SQLServerStatement stmt) throws SQLServerException {
         // typeInfo is null when called from PreparedStatement->Parameter->SendByRPC
-        executeOp(new SendByRPCOp(name, typeInfo, collation, precision, outScale, isOutParam, tdsWriter, conn));
+        executeOp(new SendByRPCOp(name, typeInfo, collation, precision, outScale, isOutParam, tdsWriter, stmt));
     }
 }
 

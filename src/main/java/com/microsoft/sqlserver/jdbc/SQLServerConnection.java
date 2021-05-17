@@ -826,13 +826,16 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
 
     /** global system ColumnEncryptionKeyStoreProviders */
     static Map<String, SQLServerColumnEncryptionKeyStoreProvider> globalSystemColumnEncryptionKeyStoreProviders = new HashMap<>();
+
     static {
         if (System.getProperty("os.name").toLowerCase(Locale.ENGLISH).startsWith("windows")) {
             SQLServerColumnEncryptionCertificateStoreProvider provider = new SQLServerColumnEncryptionCertificateStoreProvider();
             globalSystemColumnEncryptionKeyStoreProviders.put(provider.getName(), provider);
         }
     }
+
     static Map<String, SQLServerColumnEncryptionKeyStoreProvider> globalCustomColumnEncryptionKeyStoreProviders = null;
+
     /** This is a per-connection store provider. It can be JKS or AKV. */
     Map<String, SQLServerColumnEncryptionKeyStoreProvider> systemColumnEncryptionKeyStoreProvider = new HashMap<>();
 
@@ -964,6 +967,93 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
         }
 
         return keystoreProvider;
+    }
+
+    synchronized String getAllConnectionColumnEncryptionKeyStoreProviders() {
+        String keyStores = "";
+        if (0 != connectionColumnEncryptionKeyStoreProvider.size())
+            keyStores = connectionColumnEncryptionKeyStoreProvider.keySet().toString();
+        return keyStores;
+    }
+
+    synchronized SQLServerColumnEncryptionKeyStoreProvider getColumnEncryptionKeyStoreProviderOnConnection(
+            String providerName) throws SQLServerException {
+
+        // Check for a connection-level provider first
+        if (null != connectionColumnEncryptionKeyStoreProvider &&
+                connectionColumnEncryptionKeyStoreProvider.size() > 0) {
+            // If any connection-level providers are registered, we don't fall back to connection-level providers
+            if (connectionColumnEncryptionKeyStoreProvider.containsKey(providerName)) {
+                return connectionColumnEncryptionKeyStoreProvider.get(providerName);
+            } else {
+                MessageFormat form = new MessageFormat(
+                        SQLServerException.getErrString("R_UnrecognizedConnectionKeyStoreProviderName"));
+                Object[] msgArgs = {providerName, getAllConnectionColumnEncryptionKeyStoreProviders()};
+                throw new SQLServerException(form.format(msgArgs), null);
+            }
+        }
+
+        // No connection-level providers registered, so return system/global provider
+        return getColumnEncryptionKeyStoreProvider(providerName);
+    }
+
+    /** This is a user-defined per-connection store provider. */
+    Map<String, SQLServerColumnEncryptionKeyStoreProvider> connectionColumnEncryptionKeyStoreProvider = new HashMap<>();
+
+    /**
+     * Registers connection-level key store providers, replacing all existing providers.
+     * 
+     * @param clientKeyStoreProviders
+     *        a map containing the store providers information.
+     * @throws SQLServerException
+     *         when an error occurs
+     */
+    public synchronized void registerColumnEncryptionKeyStoreProvidersOnConnection(
+            Map<String, SQLServerColumnEncryptionKeyStoreProvider> clientKeyStoreProviders) throws SQLServerException {
+        loggerExternal.entering(loggingClassName, "registerColumnEncryptionKeyStoreProvidersOnConnection",
+                "Registering Column Encryption Key Store Providers on Connection");
+
+        if (null == clientKeyStoreProviders) {
+            throw new SQLServerException(null, SQLServerException.getErrString("R_CustomKeyStoreProviderMapNull"), null,
+                    0, false);
+        }
+
+        connectionColumnEncryptionKeyStoreProvider.clear();
+
+        for (Map.Entry<String, SQLServerColumnEncryptionKeyStoreProvider> entry : clientKeyStoreProviders.entrySet()) {
+            String providerName = entry.getKey();
+            if (null == providerName || 0 == providerName.length()) {
+                throw new SQLServerException(null, SQLServerException.getErrString("R_EmptyCustomKeyStoreProviderName"),
+                        null, 0, false);
+            }
+            if (null == entry.getValue()) {
+                throw new SQLServerException(null,
+                        String.format(SQLServerException.getErrString("R_CustomKeyStoreProviderValueNull"), providerName),
+                        null, 0, false);
+            }
+
+            connectionColumnEncryptionKeyStoreProvider.put(entry.getKey(), entry.getValue());
+        }
+
+        loggerExternal.exiting(loggingClassName, "registerColumnEncryptionKeyStoreProvidersOnConnection",
+                "Number of connection-level Key store providers that are registered: "
+                        + connectionColumnEncryptionKeyStoreProvider.size());
+    }
+
+    /**
+     * Unregisters all the connection-level key store providers.
+     */
+    public synchronized void unregisterColumnEncryptionKeyStoreProvidersOnConnection() {
+        loggerExternal.entering(loggingClassName, "unregisterColumnEncryptionKeyStoreProvidersOnConnection",
+                "Removing connection-level Column Encryption Key Store Provider");
+
+        if (null != connectionColumnEncryptionKeyStoreProvider) {
+            connectionColumnEncryptionKeyStoreProvider.clear();
+        }
+
+        loggerExternal.exiting(loggingClassName, "unregisterColumnEncryptionKeyStoreProvidersOnConnection",
+                "Number of connection-level Key store providers that are registered: "
+                        + connectionColumnEncryptionKeyStoreProvider.size());
     }
 
     /** trusted servername AE */
@@ -6529,12 +6619,13 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
 
     /**
      * Sets time-to-live for column encryption key entries in the column encryption key cache for the Always Encrypted
-     * feature. The default value is 2 hours. This variable holds the value in seconds.
+     * feature. The default value is 2 hours. This variable holds the value in seconds. This only applies to global-level
+     * key store providers. Connection and Statement-level providers need to set their own cache TTL values.
      * 
      * @param columnEncryptionKeyCacheTTL
      *        The timeunit in seconds
      * @param unit
-     *        The Timeunit.
+     *        The Timeunit
      * @throws SQLServerException
      *         when an error occurs
      */

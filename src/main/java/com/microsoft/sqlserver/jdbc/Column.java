@@ -429,7 +429,7 @@ final class Column {
         updaterDTV = null;
     }
 
-    void sendByRPC(TDSWriter tdsWriter, SQLServerConnection conn) throws SQLServerException {
+    void sendByRPC(TDSWriter tdsWriter, SQLServerStatement stmt) throws SQLServerException {
         // If the column has had no updates then there is nothing to send
         if (null == updaterDTV)
             return;
@@ -449,7 +449,7 @@ final class Column {
                                                                                                                        // for
                                                                                                                        // column
                                                                                                                        // updates)
-                    tdsWriter, conn);
+                    tdsWriter, stmt);
         } finally {
             // this is for updateRow() stuff
             updaterDTV.sendCryptoMetaData(null, tdsWriter);
