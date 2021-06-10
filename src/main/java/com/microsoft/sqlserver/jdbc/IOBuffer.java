@@ -1120,9 +1120,9 @@ final class TDSChannel implements Serializable {
             if (logger.isLoggable(Level.FINEST))
                 logger.finest(toString() + " Skipping " + n + " bytes");
 
-            while (cachedLength > 0 && bytesSkipped < n) {
+            while (bytesSkipped < n) {
                 bytesSkipped++;
-                getOneFromCache();
+                if(cachedLength > 0) getOneFromCache();
             }
 
             if (bytesSkipped < n) {
