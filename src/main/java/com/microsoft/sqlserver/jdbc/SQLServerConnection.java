@@ -1961,6 +1961,8 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
 
                     if (enclaveAttestationProtocol.equalsIgnoreCase(AttestationProtocol.HGS.toString())) {
                         this.enclaveProvider = new SQLServerVSMEnclaveProvider();
+                    } else if (enclaveAttestationProtocol.equalsIgnoreCase(AttestationProtocol.NONE.toString())) {
+                        this.enclaveProvider = new SQLServerNoneEnclaveProvider();
                     } else {
                         // If it's a valid Provider & not HGS, then it has to be AAS
                         this.enclaveProvider = new SQLServerAASEnclaveProvider();
@@ -1968,13 +1970,17 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                 }
 
                 // enclave requires columnEncryption=enabled, enclaveAttestationUrl and enclaveAttestationProtocol
-                if ((null != enclaveAttestationUrl && !enclaveAttestationUrl.isEmpty()
-                        && (null == enclaveAttestationProtocol || enclaveAttestationProtocol.isEmpty()))
-                        || (null != enclaveAttestationProtocol && !enclaveAttestationProtocol.isEmpty()
-                                && (null == enclaveAttestationUrl || enclaveAttestationUrl.isEmpty()))
-                        || (null != enclaveAttestationUrl && !enclaveAttestationUrl.isEmpty()
-                                && (null != enclaveAttestationProtocol || !enclaveAttestationProtocol.isEmpty())
-                                && (null == columnEncryptionSetting || !isColumnEncryptionSettingEnabled()))) {
+                if ((
+                // attestation URL requires attestation protocol
+                null != enclaveAttestationUrl && !enclaveAttestationUrl.isEmpty()
+                        && (null == enclaveAttestationProtocol || enclaveAttestationProtocol.isEmpty())) || (
+                // attestation protocol other than NONE requires attestation URL
+                null != enclaveAttestationProtocol && !enclaveAttestationProtocol.isEmpty()
+                        && !enclaveAttestationProtocol.equalsIgnoreCase(AttestationProtocol.NONE.toString())
+                        && (null == enclaveAttestationUrl || enclaveAttestationUrl.isEmpty())) || (
+                // attestation protocol requires column encryption
+                (null != enclaveAttestationProtocol || !enclaveAttestationProtocol.isEmpty())
+                        && (null == columnEncryptionSetting || !isColumnEncryptionSettingEnabled()))) {
                     throw new SQLServerException(SQLServerException.getErrString("R_enclavePropertiesError"), null);
                 }
 
@@ -4460,7 +4466,8 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
         if (write) {
             tdsWriter.writeByte(TDS.TDS_FEATURE_EXT_AE); // FEATUREEXT_TC
             tdsWriter.writeInt(1); // length of version
-            if (null == enclaveAttestationUrl || enclaveAttestationUrl.isEmpty()) {
+            if (null == enclaveAttestationUrl || enclaveAttestationUrl.isEmpty()
+                    || !enclaveAttestationProtocol.equalsIgnoreCase(AttestationProtocol.NONE.toString())) {
                 tdsWriter.writeByte(TDS.COLUMNENCRYPTION_VERSION1);
             } else {
                 tdsWriter.writeByte(TDS.COLUMNENCRYPTION_VERSION2);
@@ -5575,7 +5582,8 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
 
                 serverColumnEncryptionVersion = ColumnEncryptionVersion.AE_V1;
 
-                if (null != enclaveAttestationUrl) {
+                if (null != enclaveAttestationUrl
+                        || enclaveAttestationProtocol.equalsIgnoreCase(AttestationProtocol.NONE.toString())) {
                     if (aeVersion < TDS.COLUMNENCRYPTION_VERSION2) {
                         throw new SQLServerException(SQLServerException.getErrString("R_enclaveNotSupported"), null);
                     } else {
