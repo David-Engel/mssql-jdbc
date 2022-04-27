@@ -2097,7 +2097,6 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                 }
                 transparentNetworkIPResolution = isBooleanPropertyOn(sPropKey, sPropValue);
 
-                sPropKey = SQLServerDriverStringProperty.ENCRYPT.toString();
                 sPropKey = SQLServerDriverStringProperty.PREPARE_METHOD.toString();
                 sPropValue = activeConnectionProperties.getProperty(sPropKey);
                 if (null == sPropValue) {

@@ -151,6 +151,7 @@ final class ExtendedSocketOptions {
 
 final class TDS {
     // TDS protocol versions
+    static final String VER_TDS80 = "tds/8.0"; // TLS-first connections
     static final int VER_DENALI = 0x74000004; // TDS 7.4
     static final int VER_KATMAI = 0x730B0003; // TDS 7.3B(includes null bit compression)
     static final int VER_YUKON = 0x72090002; // TDS 7.2
@@ -1760,16 +1761,15 @@ final class TDSChannel implements Serializable {
             if (logger.isLoggable(Level.FINEST))
                 logger.finest(toString() + " Creating SSL socket");
 
-            proxySocket = new ProxySocket(this);
-
             if (isTDSS) {
-                sslSocket = (SSLSocket) sslContext.getSocketFactory().createSocket(host, port);
+                sslSocket = (SSLSocket) sslContext.getSocketFactory().createSocket(channelSocket, host, port, true);
 
                 // set ALPN values
                 SSLParameters sslParam = sslSocket.getSSLParameters();
-                sslParam.setApplicationProtocols(new String[] {"tds/8.0"});
+                sslParam.setApplicationProtocols(new String[] {TDS.VER_TDS80});
                 sslSocket.setSSLParameters(sslParam);
             } else {
+                proxySocket = new ProxySocket(this);
                 // don't close proxy when SSL socket is closed
                 sslSocket = (SSLSocket) sslContext.getSocketFactory().createSocket(proxySocket, host, port, false);
             }
@@ -1789,13 +1789,13 @@ final class TDSChannel implements Serializable {
                     logger.finest(toString() + " Application Protocol negotiated: "
                             + ((negotiatedProtocol == null) ? "null" : negotiatedProtocol));
                 }
-            }
-            
-            // After SSL handshake is complete, re-wire proxy socket to use raw TCP/IP streams ...
-            if (logger.isLoggable(Level.FINEST))
-                logger.finest(toString() + " Rewiring proxy streams after handshake");
+            } else {
+                // After SSL handshake is complete, re-wire proxy socket to use raw TCP/IP streams ...
+                if (logger.isLoggable(Level.FINEST))
+                    logger.finest(toString() + " Rewiring proxy streams after handshake");
 
-            proxySocket.setStreams(inputStream, outputStream);
+                proxySocket.setStreams(inputStream, outputStream);
+            }
 
             // ... and re-wire TDSChannel to use SSL streams.
             if (logger.isLoggable(Level.FINEST))
